@@ -1,0 +1,7 @@
+../Core/Inc/ring_buffer.c:11:6:RingBuffer_Init	16	static
+../Core/Inc/ring_buffer.c:17:6:RingBuffer_IsEmpty	16	static
+../Core/Inc/ring_buffer.c:22:6:RingBuffer_IsFull	16	static
+../Core/Inc/ring_buffer.c:27:6:RingBuffer_Write	24	static
+../Core/Inc/ring_buffer.c:47:10:RingBuffer_WriteArray	32	static
+../Core/Inc/ring_buffer.c:75:6:RingBuffer_Read	16	static
+../Core/Inc/ring_buffer.c:91:10:RingBuffer_Available	16	static
