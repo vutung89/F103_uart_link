@@ -20,18 +20,18 @@
 #define UART_RX_DMA_SIZE        512u     /* DMA circular buffer (bytes)       */
 #define UART_RX_RING_SIZE       1024u    /* Software ring buffer (power-of-2) */
 
-#define PAYLOAD_MAX_SIZE        32u     /* Max payload bytes per frame        */
-#define FRAME_QUEUE_SIZE        32u      /* RX frame queue depth               */
+#define PAYLOAD_MAX_SIZE        128u     /* Max payload bytes per frame        */
+#define RX_QUEUE_DEPTH          32u      /* RX frame queue depth               */
 
-#define TX_FRAME_MAX_SIZE       (PAYLOAD_MAX_SIZE + 4u)     /* Max TX frame bytes (header + len + payload + crc16)*/
-#define TX_QUEUE_SIZE           32u      /* TX frame queue depth               */
+#define TX_FRAME_MAX_SIZE       (PAYLOAD_MAX_SIZE + 4u)     /* Max TX frame bytes (header + len + crc16_lo + crc16_hi)*/
+#define TX_QUEUE_DEPTH          32u      /* TX frame queue depth               */
 
 /* =========================================================================
  * Protocol constants
- *   Frame layout: [0xAA][LEN_OF_PAYLOAD][PAYLOAD][CRC8_OF_LEN+PAYLOAD]
+ *   Frame layout: [0xAA][LEN_OF_PAYLOAD][PAYLOAD][CRC16_OF_LEN+PAYLOAD]
  * ========================================================================= */
 
-#define PROTO_HEADER            0xAAu
+#define PROTO_HEADER            0xFDu //same Mavlink v2 Start byte
 
 /* Command IDs carried in payload[0] */
 #define CMD_SET_PID             0x01u
@@ -84,20 +84,20 @@ typedef struct
 
 typedef struct
 {
-    Frame_t  buf[FRAME_QUEUE_SIZE];
+    Frame_t  buf[RX_QUEUE_DEPTH];
     volatile uint8_t head;
     volatile uint8_t tail;
-} FrameQueue_t;
+} RxQueue_t;
 
 typedef struct
 {
-    TxFrame_t buf[TX_QUEUE_SIZE];
+    TxFrame_t buf[TX_QUEUE_DEPTH];
     volatile uint8_t head;
     volatile uint8_t tail;
 } TxQueue_t;
 
-bool FrameQueue_Push(FrameQueue_t *q, const Frame_t *frame);
-bool FrameQueue_Pop(FrameQueue_t *q, Frame_t *frame);
+bool RxQueue_Push(RxQueue_t *q, const Frame_t *frame);
+bool RxQueue_Pop(RxQueue_t *q, Frame_t *frame);
 
 bool TxQueue_Push(TxQueue_t *q, const TxFrame_t *frame);
 bool TxQueue_Pop(TxQueue_t *q, TxFrame_t *frame);
@@ -122,7 +122,7 @@ typedef struct
     uint8_t  length;
     uint8_t  index;
     uint8_t  payload[PAYLOAD_MAX_SIZE];
-
+    uint16_t crc_accum;
     uint16_t crc_rx;
 } Protocol_t;
 /* =========================================================================
@@ -146,7 +146,7 @@ typedef struct
     Protocol_t proto;
 
     /* ── RX frame queue (protocol → command handler) ─────────────────── */
-    FrameQueue_t frame_queue;
+    RxQueue_t rx_queue;
 
     /* ── TX frame queue (command handler → DMA driver) ───────────────── */
     TxQueue_t tx_queue;
@@ -160,7 +160,7 @@ typedef struct
 /* =========================================================================
  * Public API
  * ========================================================================= */
-void Protocol_ProcessByte(Protocol_t *proto, uint8_t byte, FrameQueue_t *fq);
+void Protocol_ProcessByte(Protocol_t *proto, uint8_t byte, RxQueue_t *fq);
 void Protocol_Task(Uart_Link_t *ul);
 void Command_Process(Uart_Link_t *ul, const Frame_t *frame);
 void Command_Task(Uart_Link_t *ul);

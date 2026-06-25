@@ -1,18 +1,34 @@
 #include "crc16.h"
 
-uint16_t CRC16_Calculate(const uint8_t *data, uint16_t len)
+uint16_t CRC16_Init(void)
 {
-    uint8_t ucCRCHi = 0xFF;
-    uint8_t ucCRCLo = 0xFF;
-    uint8_t iIndex;
+    return 0xFFFF;
+}
 
-    for (size_t i = 0; i < len; i++) {
-        iIndex = ucCRCLo ^ data[i];
-        ucCRCLo = ucCRCHi ^ aucCRCHi[iIndex];
-        ucCRCHi = aucCRCLo[iIndex];
+uint16_t CRC16_Update(uint16_t crc, uint8_t data)
+{
+    uint8_t ucCRCHi = (uint8_t)(crc >> 8);
+    uint8_t ucCRCLo = (uint8_t)(crc & 0xFF);
+
+    uint8_t iIndex = ucCRCLo ^ data;
+
+    ucCRCLo = ucCRCHi ^ aucCRCHi[iIndex];
+    ucCRCHi = aucCRCLo[iIndex];
+
+    return ((uint16_t)ucCRCHi << 8) | ucCRCLo;
+}
+
+uint16_t CRC16_Calculate(const uint8_t *data,
+                         uint16_t len)
+{
+    uint16_t crc = CRC16_Init();
+
+    for (uint16_t i = 0; i < len; i++)
+    {
+        crc = CRC16_Update(crc, data[i]);
     }
 
-    return (ucCRCHi << 8) | ucCRCLo;
+    return crc;
 }
 
 uint16_t CRC16_Append(uint8_t *frame, uint16_t payload_len)

@@ -24,7 +24,7 @@
  *   Protocol State Machine             [HEADER → LENGTH → PAYLOAD → CRC]
  *          │  CRC-8 verified
  *          ▼
- *   Frame Queue  (ul->frame_queue)
+ *   Frame Queue  (ul->rx_queue)
  *          │   push frames from protocol task, pop frames in command task
  *          ▼
  *   Command Handler  (Command_Task)
@@ -45,12 +45,12 @@
  /**
   * 
   * Example usage:
-  * HEARTBEAT
-  * send (hex): AA 01 03 26
-  * response: AA 01 03 26
+  * HEARTBEAT 
+  * send (hex): FD 01 03 40 21
+  * response: FD 01 03 40 21
   * SET_PID
-  * send (hex): AA 07 01 00 40 00 0D 00 00 14
-  * response: AA 02 01 00 8B
+  * send (hex): FD 07 01 00 40 00 0D 00 00 14
+  * response: FD 02 01 00 8B
 */
 
 #include "uart_link.h"
@@ -84,9 +84,9 @@ bool RingBuffer_Read(RingBuffer_t *rb, uint8_t *byte)
  * Internal queue helpers
  * ========================================================================= */
 
-bool FrameQueue_Push(FrameQueue_t *q, const Frame_t *frame)
+bool RxQueue_Push(RxQueue_t *q, const Frame_t *frame)
 {
-    uint8_t next = (uint8_t)((q->head + 1u) % FRAME_QUEUE_SIZE);
+    uint8_t next = (uint8_t)((q->head + 1u) % RX_QUEUE_DEPTH);
     if (next == q->tail)
         return false;   /* queue full */
     q->buf[q->head] = *frame;
@@ -94,18 +94,18 @@ bool FrameQueue_Push(FrameQueue_t *q, const Frame_t *frame)
     return true;
 }
 
-bool FrameQueue_Pop(FrameQueue_t *q, Frame_t *frame)
+bool RxQueue_Pop(RxQueue_t *q, Frame_t *frame)
 {
     if (q->tail == q->head)
         return false;   /* queue empty */
     *frame  = q->buf[q->tail];
-    q->tail = (uint8_t)((q->tail + 1u) % FRAME_QUEUE_SIZE);
+    q->tail = (uint8_t)((q->tail + 1u) % RX_QUEUE_DEPTH);
     return true;
 }
 
 bool TxQueue_Push(TxQueue_t *q, const TxFrame_t *frame)
 {
-    uint8_t next = (uint8_t)((q->head + 1u) % TX_QUEUE_SIZE);
+    uint8_t next = (uint8_t)((q->head + 1u) % TX_QUEUE_DEPTH);
     if (next == q->tail)
         return false;
     q->buf[q->head] = *frame;
@@ -118,7 +118,7 @@ bool TxQueue_Pop(TxQueue_t *q, TxFrame_t *frame)
     if (q->tail == q->head)
         return false;
     *frame  = q->buf[q->tail];
-    q->tail = (uint8_t)((q->tail + 1u) % TX_QUEUE_SIZE);
+    q->tail = (uint8_t)((q->tail + 1u) % TX_QUEUE_DEPTH);
     return true;
 }
 
@@ -241,7 +241,7 @@ void Uart_Link_TxCpltCallback(
 void Protocol_ProcessByte(
     Protocol_t   *proto,
     uint8_t       byte,
-    FrameQueue_t *fq)
+    RxQueue_t *rq)
 {
     switch (proto->state)
     {
@@ -261,6 +261,9 @@ void Protocol_ProcessByte(
                 proto->state = PROTO_WAIT_HEADER;
                 break;
             }
+            proto->crc_accum = CRC16_Init();
+
+            proto->crc_accum =CRC16_Update(proto->crc_accum, byte);
 
             proto->length = byte;
             proto->index  = 0u;
@@ -272,6 +275,8 @@ void Protocol_ProcessByte(
         case PROTO_WAIT_PAYLOAD:
         {
             proto->payload[proto->index++] = byte;
+
+            proto->crc_accum = CRC16_Update(proto->crc_accum, byte);
 
             if (proto->index >= proto->length)
             {
@@ -293,22 +298,7 @@ void Protocol_ProcessByte(
         {
             proto->crc_rx |= ((uint16_t)byte << 8);
 
-            uint8_t crc_buf[PAYLOAD_MAX_SIZE + 2];
-
-            crc_buf[0] = PROTO_HEADER;
-            crc_buf[1] = proto->length;
-
-            memcpy(&crc_buf[2],
-                proto->payload,
-                proto->length);
-
-            uint16_t crc_calc =
-                CRC16_Calculate(
-                    crc_buf,
-                    proto->length + 2
-                );
-
-            if (crc_calc == proto->crc_rx)
+            if (proto->crc_accum == proto->crc_rx)
             {
                 Frame_t frame;
 
@@ -318,7 +308,7 @@ void Protocol_ProcessByte(
                     proto->payload,
                     proto->length);
 
-                FrameQueue_Push(fq, &frame);
+                RxQueue_Push(rq, &frame);
             }
 
             proto->state = PROTO_WAIT_HEADER;
@@ -342,7 +332,7 @@ void Protocol_Task(Uart_Link_t *ul)
         Protocol_ProcessByte(
             &ul->proto,
             byte,
-            &ul->frame_queue);
+            &ul->rx_queue);
     }
 }
 
@@ -418,7 +408,7 @@ void Command_Task(Uart_Link_t *ul)
 {
     Frame_t frame;
 
-    while (FrameQueue_Pop(&ul->frame_queue, &frame))
+    while (RxQueue_Pop(&ul->rx_queue, &frame))
         Command_Process(ul, &frame);
 }
 
@@ -428,9 +418,6 @@ void Command_Task(Uart_Link_t *ul)
 
 void TX_Task(Uart_Link_t *ul)
 {
-    /* TX_SendFrame is also called from TxCpltCallback (ISR).
-     * Calling it here covers the case where tx_busy is already false
-     * but a frame arrived in the queue after the last ISR fired.      */
     TX_SendFrame(ul);
 }
 
@@ -448,7 +435,7 @@ void Uart_Link_Task(Uart_Link_t *ul)
 /* =========================================================================
  * Public API – enqueue an outgoing frame
  *
- *  Encodes:  [HEAD][LEN][PAYLOAD…][CRC8]
+ *  Encodes:  [HEAD][LEN][PAYLOAD…][CRC]
  *  Returns false if TX queue is full or payload is too large.
  * ========================================================================= */
 bool Uart_Link_Send(Uart_Link_t *ul,
@@ -461,7 +448,7 @@ bool Uart_Link_Send(Uart_Link_t *ul,
     if (len == 0u || len > PAYLOAD_MAX_SIZE)
         return false;
 
-    /* header(1) + len(1) + crc16(2) */
+    /* header(1) + len(1) + crc16_lo + crc16_hi */
     if ((uint16_t)(len + 4u) > TX_FRAME_MAX_SIZE)
         return false;
 
@@ -474,13 +461,7 @@ bool Uart_Link_Send(Uart_Link_t *ul,
     memcpy(&tx.data[idx], payload, len);
     idx += len;
 
-    /*
-     * CRC tính trên:
-     * LEN + PAYLOAD
-     */
-    uint16_t crc =
-        CRC16_Calculate(&tx.data[0],
-                        (uint16_t)(len + 2u));
+    uint16_t crc = CRC16_Calculate(&tx.data[1], (uint16_t)(len + 1u)); //LEN + PAYLOAD
 
     tx.data[idx++] = (uint8_t)(crc & 0xFF);         // CRC_LO
     tx.data[idx++] = (uint8_t)((crc >> 8) & 0xFF); // CRC_HI

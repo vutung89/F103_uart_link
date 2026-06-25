@@ -55,6 +55,10 @@ static const uint8_t aucCRCLo[] = {
     0x41, 0x81, 0x80, 0x40
 };
 
+uint16_t CRC16_Init(void);
+
+uint16_t CRC16_Update(uint16_t crc, uint8_t data);
+
 uint16_t CRC16_Calculate(const uint8_t *data, uint16_t len);
 
 uint16_t CRC16_Append(uint8_t *frame, uint16_t payload_len);

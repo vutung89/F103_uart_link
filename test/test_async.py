@@ -38,16 +38,7 @@ import serial_asyncio
 import logging
 from datetime import datetime
 import random
-
-# ------------------------------------------------------------------------------------------------------
-# PARAMETERS
-# ------------------------------------------------------------------------------------------------------
-
-
-import asyncio
-import serial_asyncio
-import logging
-import random
+import time
 
 # =============================================================================
 # CONFIG
@@ -56,12 +47,14 @@ import random
 PORT = "COM7"
 BAUDRATE = 115200
 
-PROTO_HEADER = 0xAA
-PAYLOAD_MAX_SIZE = 32
+PROTO_HEADER = 0xFD
+PAYLOAD_MAX_SIZE = 128
 
-TIME_DELAY = 0.0005
+TIME_DELAY = 0.01
 
 CMD_ECHO_PAYLOAD = 0x04
+CMD_HEARTBEAT = 0x03
+CMD_SET_PID = 0x01 
 
 #------------------------------------------------------------------------------------------------------
 
@@ -176,7 +169,7 @@ def build_frame(payload: bytes) -> bytes:
     frame.extend(payload)
 
     crc = calculate_crc16(
-        bytes([PROTO_HEADER, len(payload)]) + payload
+        bytes([len(payload)]) + payload
     )
 
     frame.append(crc & 0xFF)
@@ -187,16 +180,13 @@ def build_frame(payload: bytes) -> bytes:
 
 def verify_frame(frame: bytes) -> bool:
 
-    if len(frame) < 4:
+    if len(frame) < 5:
         return False
 
     if frame[0] != PROTO_HEADER:
         return False
 
     length = frame[1]
-
-    if len(frame) != length + 4:
-        return False
 
     payload = frame[2:2 + length]
 
@@ -207,7 +197,7 @@ def verify_frame(frame: bytes) -> bool:
     )
 
     crc_calc = calculate_crc16(
-        bytes([PROTO_HEADER, length]) + payload
+        bytes([length]) + payload
     )
 
     if crc_recv != crc_calc:
@@ -265,34 +255,23 @@ class AsyncCommandLink:
         await self.writer.drain()
 
     async def receive_frame(self):
-
         while True:
-
             b = await self.reader.readexactly(1)
-
             if b[0] == PROTO_HEADER:
                 break
 
-        length = (
-            await self.reader.readexactly(1)
-        )[0]
+        length_bytes = await self.reader.readexactly(1)
+        length = length_bytes[0]          # ← giải ra int
 
-        if length == 0:
-            raise RuntimeError("invalid length")
+        if length == 0 or length > PAYLOAD_MAX_SIZE:
+            raise RuntimeError(f"invalid length: {length}")
 
-        remain = await self.reader.readexactly(
-            length + 2
-        )
+        remain = await self.reader.readexactly(length + 2)  # payload + CRC_LO + CRC_HI
 
-        frame = bytes([
-            PROTO_HEADER,
-            length
-        ]) + remain
+        frame = bytes([PROTO_HEADER, length]) + remain
 
-        if verify_frame(frame) is False:
-            raise RuntimeError(
-                "CRC verify failed"
-            )
+        if not verify_frame(frame):
+            raise RuntimeError(f"CRC mismatch: {frame.hex()}")
 
         return frame
 
@@ -308,15 +287,12 @@ class AsyncCommandLink:
 
         await self.send_frame(payload)
 
-        echo = await asyncio.wait_for(
+        rx_frame = await asyncio.wait_for(
             self.receive_frame(),
             timeout
         )
+        print("rx: ",rx_frame.hex(' '))
 
-        if echo != payload:
-            raise RuntimeError(
-                "Echo mismatch"
-            )
 
     async def request(
         self,
@@ -334,6 +310,7 @@ class AsyncCommandLink:
         return response
     
     async def echo_payload(self, payload: bytes, timeout=1.0):
+        payload = bytes([CMD_ECHO_PAYLOAD]) + payload
         await self.send_frame(payload)
         frame = await asyncio.wait_for(
             self.receive_frame(),
@@ -341,8 +318,8 @@ class AsyncCommandLink:
         )
         len_payload = frame[1]
         echo_payload = frame[2:(2+len_payload)]
-        print(echo_payload)
-        if (echo_payload != payload):
+        print(echo_payload.hex(' '))
+        if echo_payload != payload:
             print("echo payload Fail")
 
 
@@ -360,17 +337,23 @@ async def main():
     await link.connect()
 
     try:
-        payload = bytes([CMD_ECHO_PAYLOAD, 0xaa, 0xfd, 0xff, 0x00])
-        await link.echo_payload(payload, timeout=1)
+        time_start = time.time()
+        payload = bytes([CMD_SET_PID, 0x00, 0x40, 0x00, 0x0D, 0x00, 0x00])
+        await link.send_command(payload, timeout=1)
 
-
+        echo_payload = bytes(120)
         for i in range(100):
             print(f"num {i}")
-            await link.echo_payload(payload, timeout=1)
+            await link.echo_payload(echo_payload, timeout=1)
 
             await asyncio.sleep(
                 TIME_DELAY
             )
+
+        time_process = time.time() - time_start
+
+
+        print(f"time: {time_process}")
 
     finally:
 
