@@ -22,7 +22,7 @@
  *          │   processes bytes into frames, verifies CRC, pushes to frame queue
  *          ▼
  *   Protocol State Machine             [HEADER → LENGTH → PAYLOAD → CRC]
- *          │  CRC-8 verified
+ *          │  CRC verified
  *          ▼
  *   Frame Queue  (ul->rx_queue)
  *          │   push frames from protocol task, pop frames in command task
@@ -126,8 +126,8 @@ bool TxQueue_Pop(TxQueue_t *q, TxFrame_t *frame)
 /* =========================================================================
  * TX helpers – build encoded frame and kick DMA
  * =========================================================================
- *  Wire format:  [HEAD] [LEN] [PAYLOAD × LEN] [CRC8]
- *  CRC8 covers:  LEN + all PAYLOAD bytes
+ *  Wire format:  [HEAD] [LEN] [PAYLOAD × LEN] [CRC]
+ *  CRC covers:  LEN + all PAYLOAD bytes
  * ========================================================================= */
 
 void TX_SendFrame(Uart_Link_t *ul)

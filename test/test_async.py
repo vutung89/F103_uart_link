@@ -265,7 +265,7 @@ class AsyncCommandLink:
             self.receive_frame(),
             timeout
         )
-        print("rx: ",rx_frame.hex(' '))
+        logging.info("rx: ",rx_frame.hex(' '))
 
 
     async def request(
@@ -292,9 +292,9 @@ class AsyncCommandLink:
         )
         len_payload = frame[1]
         echo_payload = frame[2:(2+len_payload)]
-        print(echo_payload.hex(' '))
+        logging.info(echo_payload.hex(' '))
         if echo_payload != payload:
-            print("echo payload Fail")
+            logging.error("echo payload Fail")
 
 
 # =============================================================================
@@ -317,7 +317,7 @@ async def main():
 
         echo_payload = bytes(120)
         for i in range(100):
-            print(f"num {i}")
+            logging.info(f"num {i}")
             await link.echo_payload(echo_payload, timeout=1)
 
             await asyncio.sleep(
@@ -327,7 +327,7 @@ async def main():
         time_process = time.time() - time_start
 
 
-        print(f"time: {time_process}")
+        logging.info(f"time: {time_process}")
 
     finally:
 
